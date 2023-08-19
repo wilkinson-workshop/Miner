@@ -154,31 +154,3 @@ Manage Minecraft services by starting, archiving, backup restoration and etc.
 |-------------------------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------|-----------------------------|
 | `minecraft_new`         | name: `str`<br>version: `str` \| `Version` \| `tuple`<br>pxy_build: `int` \| `None`<br>pxy_version: `str` \| `Version` \| `tuple` \| `None`<br>svr_build: `int` \| `None`<br>svr_version: `str` \| `Version` \| `tuple` \| `None`<br>bak_root: `Path` \| `None`<br>exe_root: `Path` \| `None`<br>jar_root: `Path` \| `None` | Create a new Minecraft instance.       | A new `Minecraft` instance. |
 | `minecraft_server_init` | mc: `Minecraft`                                                                                                                                                                                                                                                                                                             | Initializes a single Minecraft server. | N/A                         |
-
-## Miner Command Line Interface
-The below functions are explicit declarations of our CLI which interacts with
-the underlying API as described by the functions found above.
-
-`main_cli()`
-Manage Aabernathy services.
-
-`start(name: str, service: Service | None = None, mc_version: str | None = None, mem_ini: str | None = None, mem_max: str | None = None)`
-Start a service.
-
-`backup(name: str, service: Service | None = None, mc_version: str | None = None, preserve: bool | None = None)`
-Create a backup of a service.
-
-`restore(name: str, mc_version: str | None = None, tag: str | None = None, **_)`
-Restore service from backup.
-
-`jars()`
-Manage JAR files.
-
-`check(name: str, mc_version: str | None = None, build_version: str | None = None, build_id: str | None = None)`
-Construct a download URI and test it with a ping to the host.
-
-`get(name: str, mc_version: str | None = None, build_version: str | None = None, build_id: str | None = None)`
-Download a single JAR file.
-
-`getpkg(name: str, mc_version: str | None = None)`
-Download a package of JAR files.
