@@ -30,7 +30,7 @@ worldguard = 'WorldGuard-bukkit-{version}-dist.jar'
 [jars.uri.definitions]
 bettersleeping = '{host:github}/Nuytemans-Dieter/BetterSleeping/releases/download/{version}/BetterSleeping.jar'
 bluemap        = '{host:github}/BlueMap-Minecraft/BlueMap/releases/download/v{version}/BlueMap-{version}-spigot.jar'
-chestshop      = '{host}/plugins/ChestShop/versions/{version}/PAPER/ChestShop.jar'
+chestshop      = '{host}/plugins/ChestShop/ChestShop/versions/{version}/PAPER/ChestShop.jar'
 essentialsx    = '{host:github}/EssentialsX/Essentials/releases/download/{version}/{name}'
 floodgate      = '{host:geyser}/v2/projects/floodgate/versions/{version}/builds/{build}/downloads/velocity'
 gsit           = '{host:github}/Gecolay/GSit/releases/download/{version}/GSit-{version}.jar'

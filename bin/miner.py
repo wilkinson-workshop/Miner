@@ -18,6 +18,7 @@ import subprocess
 import tomllib
 import typing
 import zipfile
+from urllib.error import HTTPError
 
 import click, httpx, jproperties, wget
 
@@ -358,10 +359,97 @@ def jars_cfg(mc: Minecraft) -> pathlib.Path:
     return (mc.jar_root / "jars.toml")
 
 
+def jars_cfg_ispkg(cfg: typing.Mapping, name: str):
+    """
+    Whether or not a configuration is package
+    configuration.
+    """
+
+    fields = (
+        "depends",
+        "from"
+    )
+
+    parent = name.rsplit(".", maxsplit=1)[0]
+    return any(map(lambda k: k in fields, cfg)) and parent == "jars.packages"
+
+
 def jars_cfg_load(mc: Minecraft) -> typing.Mapping:
     """Loads the jars configuration."""
 
     return tomllib.loads(jars_cfg(mc).read_text())
+
+
+def jars_cfg_fmt(
+    mc: Minecraft,
+    jar: JarFile,
+    jcr: JarConfResponse) -> JarConfResponse:
+    """
+    Format keyword values found in a
+    `JarConfResponse`.
+    """
+
+    def getvar(kwd):
+        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
+        return reg.findall(itm)[0].strip("}{").split(":", 2)[1]
+
+    def isunset(arg):
+        reg = REGEX_FMT_ARG_SPECIFIER(arg)
+        return arg not in params and len(reg.findall(itm))
+
+    def isunsetvar(kwd):
+        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
+        return kwd not in params and len(reg.findall(itm))
+
+    def mapget(m):
+        return m.get(jar.name, tuple(m.values())[0])
+
+    def panic(kwd):
+        click.echo(
+            f"{jar.name}: {kwd!r} is required to build property.",
+            err=True)
+        quit(1)
+
+    def replvar(kwd):
+        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
+        return reg.subn("{" + kwd + "}", itm, 1)[0]
+
+    params = dict()
+    itm    = mapget(jcr)
+    while re.findall(r"\{.*\}", itm):
+        if isunset("build"):
+            if not jar.build:
+                panic("build")
+            params["build"] = str(jar.build)
+
+        if isunset("host"):
+            host = jars_jar_host(mc, jar, {})
+            if not host:
+                panic("host")
+            params["host"] = mapget(host)
+
+        if isunsetvar("host"):
+            host = getvar("host")
+            host = jars_cfg_opt(mc, f"jars.uri.special.hosts.{host}", {})
+            if not host:
+                panic(host)
+            params["host"] = mapget(host)
+            itm = replvar("host")
+
+        if isunset("name"):
+            spec_name = jars_jar_name(mc, jar, {})
+            if not spec_name:
+                panic("name")
+            params["name"] = spec_name[jar.name]
+
+        if isunset("version"):
+            if not (jar.version or mc.version):
+                panic("version")
+            params["version"] = version_new(jar.version or mc.version)
+
+        itm = itm.format_map(params)
+
+    return itm
 
 
 def jars_cfg_opt(
@@ -377,6 +465,8 @@ def jars_cfg_opt(
     config = jars_cfg_load(mc)
 
     for idx, part in enumerate(parts):
+        parent = ".".join(parts[:idx])
+
         # If the last path part contains a star,
         # do a regex lookup of all keys in the
         # map.
@@ -390,6 +480,9 @@ def jars_cfg_opt(
             temp = tuple(filter(lambda k: part.find(k) != -1, config.keys()))
             if len(temp) >= 1:
                 part = sorted(temp, reverse=True)[0]
+            # If reverse lookup fails
+            elif jars_cfg_ispkg(config, parent):
+                return config
 
         # If the current path part can't be found
         # in the current map, bail on the loop.
@@ -401,7 +494,7 @@ def jars_cfg_opt(
     # If no default is provided, and the lookup
     # failed, panic.
     if config is Unset and default is Unset:
-        raise KeyError(f"{part!r} does not exist in {'.'.join(parts[:idx])!r}")
+        raise KeyError(f"{part!r} does not exist in {parent!r}")
 
     if config is Unset:
         return default
@@ -421,19 +514,35 @@ def jars_download(mc: Minecraft, jar: JarFile) -> None:
     for name, url in urls.items():
         # Check first if JAR has been downloaded
         # already.
+
+        tmp = jars_jar_new(name, jar.version, jar.build, jar.service)
         if jars_download_exists(mc, jar, url):
-            click.echo(f"{jar} already installed for version {mc.version}")
+            click.echo(
+                f"{tmp} already installed for version {mc.version}",
+                err=True)
             continue
 
-        wget.download(url, str(dst))
-        # Progress bar for wget.download does not
-        # print a new line on its own.
-        click.echo("\n")
+        try:
+            res = wget.download(url, str(dst))
+            # Progress bar for wget.download does not
+            # print a new line on its own.
+            click.echo("\n")
+        except HTTPError as err:
+            if jars_jar_check(mc, jar):
+                res = httpx.get(url)
+            else:
+                click.echo(
+                    f"failed to download {jar} <{err.status} {err.reason}>",
+                    err=True)
+                return
 
         # Check that url name and JAR name match
         # if JAR name exists in jars config.
         url_name = wget.detect_filename(url)
         jar_name = jars_jar_name(mc, jar, {}).get(name, "notfound")
+
+        if isinstance(res, httpx.Response):
+            (dst / url_name).write_bytes(res.content)
         if jar_name == "notfound":
             continue
         if url_name != jar_name:
@@ -469,10 +578,10 @@ def jars_download_exists(
     return any(map(lambda p: p.exists(), paths))
 
 
-def jars_download_package(mc: Minecraft, jar: JarFile):
+def jars_download_package(mc: Minecraft):
     """Downloads JAR files from target package."""
 
-    pkgs = jars_jar_package(mc, jar)
+    pkgs = jars_jar_package(mc)
     for name, pkg in pkgs.items():
         click.echo(f"found package {name}")
         for j in pkg.depends:
@@ -487,7 +596,7 @@ def jars_jar_check(mc: Minecraft, jar: JarFile) -> bool:
     urls = jars_jar_url(mc, jar)
     for name, url in urls.items():
         r = httpx.head(url, follow_redirects=True)
-        click.echo(f"{name}: {url} {r.status_code}")
+        click.echo(f"{name}: {url} <{r.status_code} {r.reason_phrase}>")
 
     return r.status_code in range(200, 300)
 
@@ -522,7 +631,13 @@ def jars_jar_name(
     `JarFile`.
     """
 
-    return jars_cfg_opt(mc, f"jars.uri.special.names.{jar.name}", default)
+    names = jars_cfg_opt(mc, f"jars.uri.special.names.{jar.name}", default)
+    if names is default:
+        return default
+
+    for name in names:
+        names[name] = jars_cfg_fmt(mc, jar, {name: names[name]})
+    return names
 
 
 def jars_jar_new(
@@ -540,26 +655,30 @@ def jars_jar_new(
 
 def jars_jar_package(
     mc: Minecraft,
-    jar: JarFile) -> JarConfResponse[JarPackage]:
+    jar: JarFile | None = None) -> JarConfResponse[JarPackage]:
     """
     Get the package, or packages, associated with
     this `JarFile`.
     """
 
-    def inner(packages, pkg_name=None):
+    def maker(name, pkg, pkg_name):
+        # Sometimes we are parsing a subpackage
+        # from a parent package.
+        if name in ("from_packages", "depends"):
+            return
+
+        pkg["from_packages"] = pkg.pop("from", None)
+        pkg["depends"] = pkg.pop("depends", None)
+
+        if pkg_name:
+            name = ".".join([pkg_name, name])
+        ret[name] = jars_package_new(mc, name, **pkg)
+
+    def maker_iter(packages, pkg_name=None):
         for name, pkg in packages.items():
-            # Sometimes we are parsing a subpackage
-            # from a parent package.
-            if name in ("from_packages", "depends"):
-                continue
+            maker(name, pkg, pkg_name)
 
-            pkg["from_packages"] = pkg.pop("from", None)
-            pkg["depends"] = pkg.pop("depends", None)
-
-            if pkg_name:
-                name = ".".join([pkg_name, name])
-            ret[name] = jars_package_new(mc, name, **pkg)
-
+    jar = jar or jars_jar_new(mc.pkg_name or mc.exe_name)
     ret = {}
     pkg_path = ("jars", "packages", jar.name)
     if jar.version:
@@ -568,12 +687,12 @@ def jars_jar_package(
     pkgs     = jars_cfg_opt(mc, pkg_path)
 
     try:
-        inner(pkgs)
+        maker_iter(pkgs)
     except TypeError:
         # Parsing failed. Most likely a super
         # package.
         for name, sub_pkgs in pkgs.items():
-            inner(sub_pkgs, name)
+            maker_iter(sub_pkgs, name)
 
     return ret
 
@@ -586,74 +705,54 @@ def jars_jar_url(mc: Minecraft, jar: JarFile) -> JarConfResponse[str]:
 
     jars = [jar]
     if "*" in jar.name:
-        jars = jars_jar_name(mc, jar, {})
+        jars = jars_jar_name(mc, jar)
         jars = [jars_jar_new(n, jar.version, jar.build) for n in jars]
         return {j.name:jars_jar_url(mc, j)[j.name] for j in jars}
-
-    def getvar(kwd):
-        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
-        return reg.findall(url)[0].strip("}{").split(":", 2)[1]
-
-    def isunset(arg):
-        reg = REGEX_FMT_ARG_SPECIFIER(arg)
-        return arg not in params and len(reg.findall(url))
-
-    def isunsetvar(kwd):
-        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
-        return kwd not in params and len(reg.findall(url))
-
-    def mapget(m):
-        return m.get(jar.name, tuple(m.values())[0])
-
-    def panic(kwd):
-        click.echo(f"{jar.name}: {kwd!r} is required to build URL.", err=True)
-        quit(1)
-
-    def replvar(kwd):
-        reg = REGEX_FMT_KWD_SPECIFIER(kwd)
-        return reg.subn("{" + kwd + "}", url, 1)[0]
 
     # There's a possibility of the reverse lookup
     # to produce multiple, one or no definitions.
     definitions = jars_jar_definition(mc, jar)
     params      = dict()
-    url         = mapget(definitions)
-    while re.findall(r"\{.*\}", url):
-        if isunset("build"):
-            if not jar.build:
-                panic("build")
-            params["build"] = str(jar.build)
+    return {jar.name: jars_cfg_fmt(mc, jar, definitions)}
 
-        if isunset("host"):
-            host = jars_jar_host(mc, jar, {})
-            if not host:
-                panic("host")
-            params["host"] = mapget(host)
 
-        if isunsetvar("host"):
-            host = getvar("host")
-            host = jars_cfg_opt(mc, f"jars.uri.special.hosts.{host}", {})
-            if not host:
-                panic(host)
-            params["host"] = mapget(host)
-            url = replvar("host")
+def jars_link(mc: Minecraft, jar: JarFile) -> None:
+    """
+    Links a jar file to a `Minecraft service.
+    """
 
-        if isunset("name"):
-            spec_name = jars_jar_name(mc, jar, {})
-            if not spec_name:
-                click.echo(f"'name' is required to build URL.")
-                quit(1)
-            params["name"] = spec_name[jar.name]
+    if jar.service is not Service.Plugin:
+        click.echo(f"{jar} does not require linking.", err=True)
+        return
 
-        if isunset("version"):
-            if not (jar.version or mc.version):
-                click.echo(f"'version' is required to build URL.", err=True)
-                quit(1)
-            params["version"] = version_new(jar.version or mc.version)
+    src   = (mc.jar_root / str(mc.version))
+    dst   = (mc.exe_root / mc.exe_name / "plugins")
+    names = jars_jar_name(mc, jar, jars_jar_url(mc, jar))
 
-        url = url.format_map(params)
+    for _, name in names.items():
+        name = wget.detect_filename(name)
+        tmp  = jars_jar_new(name, jar.version, jar.build)
 
-    return {jar.name: url}
+        if not jars_download_exists(mc, tmp, name):
+            click.echo(f"{tmp} could not be found in JARs cache.", err=True)
+            continue
+        if (dst / name).exists():
+            click.echo(f"{tmp} already linked to {mc.exe_name!r}.", err=True)
+            continue
+
+        os.link((src / name), (dst / name))
+
+
+def jars_link_package(mc: Minecraft):
+    """
+    Links a JAR package to a `Minecraft`
+    service.
+    """
+
+    for name, pkg in jars_jar_package(mc).items():
+        click.echo(f"creating links for package {name!r}")
+        for j in pkg.depends:
+            jars_link(mc, j)
 
 
 def jars_package_new(
@@ -710,9 +809,9 @@ def jars_package_new(
     if not from_packages:
         return JarPackage(name, from_packages or None, depends)
 
-    depends = depends or []
+    depends = (depends or [])
     for pkg in from_packages:
-        depends.extend(pkg.depends or [])
+        depends += (pkg.depends or [])
 
     return JarPackage(name, from_packages or None, tuple(depends))
 
@@ -1000,8 +1099,28 @@ def getpkg(name: str, mc_version: str | None = None):
     """Download a package of JAR files."""
 
     mc  = minecraft_new(name, mc_version)
-    jar = jars_jar_new(name)
-    jars_download_package(mc, jar)
+    jars_download_package(mc)
+
+
+@jars.command()
+@click.argument("name")
+@click.argument("dst")
+@click.option("-V", "--mc-version", default="1.20.1")
+@click.option("--download", is_flag=True)
+def lnkpkg(
+    name: str,
+    dst: str,
+    *,
+    mc_version: str | None = None,
+    download: bool | None = None):
+    """
+    Link package files to target service assets.
+    """
+
+    mc = minecraft_new(dst, mc_version, pkg_name=name)
+    if download:
+        jars_download_package(mc)
+    jars_link_package(mc)
 
 
 if __name__ == "__main__":
