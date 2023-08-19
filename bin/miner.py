@@ -36,7 +36,6 @@ REGEX_FMT_ARG_SPECIFIER = lambda arg: (re.compile(r"\{%s\}" % (arg,)))
 REGEX_FMT_KWD_SPECIFIER = lambda kwd: (re.compile(r"\{%s:[\w\-_]+\}" % (kwd,)))
 
 
-# JarFile(build: str | int, name: str, version: Version)
 class JarFile(typing.NamedTuple):
     """JAR file common variables."""
 
@@ -51,7 +50,7 @@ class JarFile(typing.NamedTuple):
             sub = f"version={self.version!r} build={self.build!r}"
         return f"JarFile[{self.name}:{self.service}]({sub})"
 
-# JarPackage(name: str, from_packages: JarPackage, depends: Sequence[JarPackage])
+
 class JarPackage(typing.NamedTuple):
     """
     Collection Jar files and additional metadata.
