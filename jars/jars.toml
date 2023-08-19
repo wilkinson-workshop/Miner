@@ -1,0 +1,76 @@
+# Defines special keywords we use to format strings in subsequent
+# sections.
+[jars.uri.special.hosts]
+github    = 'https://github.com'
+chestshop = 'https://hangarcdn.papermc.io'
+geyser    = 'https://download.geyser.org'
+luckperms = 'https://download.luckperms.net'
+paper-mc  = 'https://api.papermc.io'
+bukkit    = 'https://dev.bukkit.org'
+
+# jars.uri.special.name represents the final 'name' the file will be
+# given when placed in the target jars subdirectory.
+[jars.uri.special.names]
+essentialsx             = 'EssentialsX-{version}.jar'
+essentialsx-antibuild   = 'EssentialsXAntiBuild-{version}.jar'
+essentialsx-chat        = 'EssentialsXChat-{version}.jar'
+essentialsx-discord     = 'EssentialsXDiscord-{version}.jar'
+essentialsx-discordlink = 'EssentialsXDiscordLink-{version}.jar'
+essentialsx-geoip       = 'EssentialsXGeoIP-{version}.jar'
+essentialsx-protect     = 'EssentialsXProtect-{version}.jar'
+essentialsx-spawn       = 'EssentialsXSpawn-{version}.jar'
+
+floodgate  = 'Floodgate-velocity.jar'
+geyser     = 'Geyser-velocity.jar'
+worldedit  = 'WorldEdit-bukkit-{version}-dist.jar'
+worldguard = 'WorldGuard-bukkit-{version}-dist.jar'
+
+# Defines the endpoint to be formatted and then used to aquired the
+# jar file.
+[jars.uri.definitions]
+bettersleeping = '{host:github}/Nuytemans-Dieter/BetterSleeping/releases/download/{version}/BetterSleeping.jar'
+bluemap        = '{host:github}/BlueMap-Minecraft/BlueMap/releases/download/v{version}/BlueMap-{version}-spigot.jar'
+chestshop      = '{host}/plugins/ChestShop/versions/{version}/PAPER/ChestShop.jar'
+essentialsx    = '{host:github}/EssentialsX/Essentials/releases/download/{version}/{name}'
+floodgate      = '{host:geyser}/v2/projects/floodgate/versions/{version}/builds/{build}/downloads/velocity'
+gsit           = '{host:github}/Gecolay/GSit/releases/download/{version}/GSit-{version}.jar'
+geyser         = '{host}/v2/projects/geyser/versions/{version}/builds/{build}/downloads/velocity'
+luckperms      = '{host}/{build}/bukkit/loader/LuckPerms-Bukkit-{version}.jar'
+paper-mc       = '{host}/v2/projects/paper/versions/{version}/builds/{build}/downloads/paper-{version}-{build}.jar'
+silkspawners   = '{host:github}/timbru31/SilkSpawners/releases/download/{version}/SilkSpawners.jar'
+vault          = '{host:github}/MilkBowl/Vault/releases/download/{version}/Vault.jar'
+velocity       = '{host:paper-mc}/v2/projects/velocity/versions/{version}/builds/{build}/downloads/velocity-{version}-{build}.jar'
+worldedit      = '{host:bukkit}/projects/worldedit/files/{build}/download'
+worldguard     = '{host:bukkit}/projects/worldguard/files/{build}/download'
+
+# Defines jar targets for specific services.
+[jars.packages]
+
+# Base target definition from Minecraft servers.
+[jars.packages.proxy.1_20_1]
+depends = [
+    { name = 'velocity', version = '3.2.0-SNAPSHOT', build = '263', service = "velocity" },
+    { name = 'geyser', version = 'latest', build= 'latest' },
+    { name = 'floodgate', version = 'latest', build = 'latest' }
+]
+
+[jars.packages.server.1_20_1]
+depends = [
+    { name = 'paper-mc', version = '1.20.1', build = '128', service = "paper" },
+    { name = 'essentialsx*', version = '2.20.1'},
+    { name = 'luckperms', version = '5.4.102', build = "1515" },
+    { name = 'vault', version = '1.7.3' }
+]
+
+[jars.packages.proxy_0]
+from = 'jars.packages.proxy.1_20_1'
+
+[jars.packages.survival_0]
+from = 'jars.packages.server.1_20_1'
+depends = [
+    { name = 'bettersleeping', version = 'v4.0.2' },
+    { name = 'bluemap', version = '3.16'},
+    { name = 'gsit', version = '1.4.10' },
+    { name = 'silkspawners', version = 'silkspawners-7.5.0' },
+    { name = 'chestshop', version = '3.12.2' }
+]
