@@ -1,7 +1,45 @@
-# Miner Development API
-miner.py how-to guide
+# Miner
+A Minecraft server utility CLI.
 
----
+The Aaberanthy Development Team uses this Python script to manage its services and subsequent plugins. It comes with a small suite of commands at the user's disposal.
+Before running this script, you will need to install some dependencies into your environment:
+```bash
+$ pip3 install click, httpx, jproperties, wget
+```
+
+Afterwards, you should be able to run the file as-is, like so:
+```bash
+$ bin/miner.py --help
+Usage: miner.py [OPTIONS] COMMAND [ARGS]...
+
+  Manage Aabernathy services.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  backup   Create a backup of a service.
+  jars     Manage JAR files.
+  restore  Restore service from backup.
+  start    Start a service.
+```
+
+`backup`, `restore` and `start` directly affect files and assets on a target service. `jars` works by managing plugin downloads defined in the JARs manifest located in `jars/jars.toml`
+
+If your first attempt to run the script does not work, be sure to modify the shebang statement at the top of `bin/miner.py`:
+```python
+#!/opt/minecraft/.venv/bin/python
+...
+```
+
+Or run the script directly from your Python of choice:
+```bash
+$ python3 bin/miner.py --help
+```
+
+# Miner Development API
+A `miner.py` how-to guide. Sections below this point describe the underlying API. These objects and functions dictate the features Miner has to offer.
+
 ## Common Objects
 Objects, types and other defintinions used commonly between API sections.
 
@@ -23,7 +61,6 @@ Type of service for minecraft.
 **Version(\*args)**
 Version representation.
 
----
 ## Common Utilities
 Tools in this section describe common use utilites shared between other facets in this API.
 
@@ -53,7 +90,6 @@ Tools in this section describe common use utilites shared between other facets i
 | `snake2camel`          | s: `str`                                           | Transform a snake-case string into a camel-cased string.                                                                                         | A camel-cased string.                                                     |
 | `version_new`          | version: `str` \| `tuple` \| `Version` \| `None`   | Create a version instance.                                                                                                                       | An instance of `Version`.                                                 |
 
----
 ## Java Execution Utilities
 Functions in this section interface with Java.
 
@@ -119,7 +155,6 @@ Manage Minecraft services by starting, archiving, backup restoration and etc.
 | `minecraft_new`         | name: `str`<br>version: `str` \| `Version` \| `tuple`<br>pxy_build: `int` \| `None`<br>pxy_version: `str` \| `Version` \| `tuple` \| `None`<br>svr_build: `int` \| `None`<br>svr_version: `str` \| `Version` \| `tuple` \| `None`<br>bak_root: `Path` \| `None`<br>exe_root: `Path` \| `None`<br>jar_root: `Path` \| `None` | Create a new Minecraft instance.       | A new `Minecraft` instance. |
 | `minecraft_server_init` | mc: `Minecraft`                                                                                                                                                                                                                                                                                                             | Initializes a single Minecraft server. | N/A                         |
 
----
 ## Miner Command Line Interface
 The below functions are explicit declarations of our CLI which interacts with
 the underlying API as described by the functions found above.
