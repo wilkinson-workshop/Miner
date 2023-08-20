@@ -96,4 +96,5 @@ from = 'jars.packages.survival_0'
 
 [jars.packages.faerun]
 service_port = 30066
+rcon_port    = 25577
 from = 'jars.packages.survival_0'

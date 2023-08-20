@@ -794,12 +794,6 @@ def jars_package_new(
     """Create a new `JarPackage` instance."""
 
     def from_pkgs(pkgs, cls=None):
-
-        def panic(kwd):
-            click.echo(
-                f"{name} {kwd!r} is required to build package.", err=True)
-            quit(1)
-
         for idx, pkg in enumerate(pkgs):
             if isinstance(pkg, cls):
                 continue
@@ -834,6 +828,11 @@ def jars_package_new(
 
         return tuple(pkgs)
 
+    def panic(kwd):
+        click.echo(
+            f"{name} {kwd!r} is required to build package.", err=True)
+        quit(1)
+
     if depends:
         depends = from_pkgs(depends, JarFile)
 
@@ -841,28 +840,22 @@ def jars_package_new(
         from_packages = [from_packages]
     if from_packages:
         from_packages = from_pkgs(from_packages, JarPackage)
+    
+    from_packages = (from_packages or ())
+    depends       = set(depends or ())
 
-    if not from_packages:
-        return JarPackage(
-            name,
-            None,
-            depends,
-            svc,
-            svc_port,
-            svc_host,
-            rcon_port,
-            rcon_password)
-
-    depends = (depends or [])
     for pkg in from_packages:
-        depends += (pkg.depends or [])
-        svc = svc_new(pkg.service)
-        svc_port      = pkg.service_port
-        svc_host      = pkg.service_host
-        rcon_port     = pkg.rcon_port
-        rcon_password = pkg.rcon_password
 
-    depends = tuple(depends)
+        for d in (pkg.depends or ()):
+            depends.add(d)
+
+        svc           = svc or pkg.service
+        svc_port      = svc_port or pkg.service_port
+        svc_host      = svc_host or pkg.service_host
+        rcon_port     = rcon_port or pkg.rcon_port
+        rcon_password = rcon_password or pkg.rcon_password
+
+    depends       = tuple(depends)
     from_packages = from_packages or None
     return JarPackage(
         name,
@@ -1250,9 +1243,9 @@ def lnkpkg(name: str, dst: str, *, mc_version: str, download: bool):
 
 @main_cli.command()
 @click.argument("cmd", nargs=-1)
-@click.option("-p", "--port")
-@click.option("-H", "--host")
-@click.option("--password")
+@click.option("-p", "--port", default=os.getenv("MINER_RCON_PORT", 25575))
+@click.option("-H", "--host", default=os.getenv("MINER_RCON_HOST", "locahost"))
+@click.option("--password", default=os.getenv("MINER_RCON_PASSWORD", None))
 @click.option("-P", "--package", "pkg")
 @click.option("-V", "--package-version", "pkg_version", default="1.20.1")
 def shell(
@@ -1282,9 +1275,14 @@ def shell(
         rep_name = pkg.name or host
 
     def handleauth():
-        rt = rcon.login(password or getpass.getpass("password: "))
+        try:
+            rt = rcon.login(password or getpass.getpass("password: "))
+        except Exception as error:
+            click.echo(error, err=True)
+            quit(1)
+
         if not rt:
-            click.echo("Authentication failed", err=True)
+            click.echo("authentication failed", err=True)
             quit(1)
 
     def handlecmd(cmd):
