@@ -28,6 +28,8 @@ import click, httpx, jproperties, wget
 
 T = typing.TypeVar("T")
 JarConfResponse = typing.Mapping[str, T]
+Service = None
+ServiceT = str | int | Service
 Unset = type("Unset", (int,), {})
 Version  = None
 VersionT = str | tuple[str | int, ...] | Version
@@ -60,6 +62,7 @@ class JarPackage(typing.NamedTuple):
     name:          str
     from_packages: str | typing.Self | typing.Sequence[typing.Self] | None
     depends:       typing.Sequence[JarFile] | None
+    service:       "Service"
 
 
 class Minecraft(typing.NamedTuple):
@@ -87,6 +90,8 @@ class Service(enum.StrEnum):
     Paper    = enum.auto()
     Velocity = enum.auto()
     Plugin   = enum.auto()
+
+ServiceServer = (Service.Paper, Service.Velocity)
 
 
 class Version(typing.NamedTuple):
@@ -176,22 +181,22 @@ def from_directory(path: pathlib.Path):
         os.chdir(origin)
 
 
-def make_jarname(mc: Minecraft, service: Service) -> pathlib.Path:
+def make_jarname(mc: Minecraft, svc: Service) -> pathlib.Path:
     """
     Returns a concatentated version of the passed
     values as jar path.
     """
 
     root  = (mc.jar_root / str(mc.version))
-    name  = str(service)
+    name  = str(svc)
     parts = ["*", "*"]
 
-    if service is Service.Paper:
+    if svc is Service.Paper:
         parts[0] = str(mc.jar_svr_ver)
         if int(mc.jar_svr_bld) >= 0:
             parts[1] = str(mc.jar_svr_bld)
 
-    elif service is Service.Velocity:
+    elif svc is Service.Velocity:
         if mc.jar_pxy_ver.major >= 0:
             parts[0] = str(mc.jar_pxy_ver)
         if mc.jar_pxy_bld >= 0:
@@ -205,9 +210,7 @@ def make_jarname(mc: Minecraft, service: Service) -> pathlib.Path:
     return (root / name)
 
 
-def service_arch_include(
-    mc: Minecraft,
-    service: Service) -> tuple[pathlib.Path, ...]:
+def svc_arch_include(mc: Minecraft, svc: Service) -> tuple[pathlib.Path, ...]:
     """Gets the include file list."""
 
     exe_from = (mc.exe_root / mc.exe_name)
@@ -215,7 +218,7 @@ def service_arch_include(
 
     # Define what files we want to preserve
     # in our backup.
-    if service is Service.Paper:
+    if svc is Service.Paper:
         config = jproperties.Properties()
         config.load((exe_from / "server.properties").read_text())
         include = (
@@ -231,20 +234,32 @@ def service_arch_include(
     return include
 
 
-def service_new(service: str | int | Service | None = None) -> Service:
+def svc_new(
+    svc: ServiceT | None = None, 
+    default: ServiceT | None = None) -> Service:
     """Return a services instance."""
 
-    if not service:
-        return Service.Paper
-    if isinstance(service, int):
-        return Service(service) #type: ignore
-    if isinstance(service, str):
-        return Service[snake2camel(service)]
+    def isservice(s):
+        return isinstance(s, Service)
 
-    raise TypeError(f"Unsupported conversion from {service!r} to {Service}")
+    def isseviceiter(s):
+        return isinstance(s, typing.Iterable) and all(map(isservice, s)) 
+
+    if not svc:
+        return default or Service.Paper
+    if isinstance(svc, Service):
+        return svc
+    if isseviceiter(svc):
+        return svc
+    if isinstance(svc, int):
+        return Service(svc) #type: ignore
+    if isinstance(svc, str):
+        return Service[snake2camel(svc)]
+
+    raise TypeError(f"Unsupported conversion from {svc!r} to {Service}")
 
 
-def service_opts_apply(
+def svc_opts_apply(
     fn: typing.Callable,
     opts: typing.Sequence[typing.Callable]) -> typing.Callable:
     """Wrap function with CLI options."""
@@ -254,23 +269,23 @@ def service_opts_apply(
     return fn
 
 
-def service_opts_common(fn: typing.Callable) -> typing.Callable:
+def svc_opts_common(fn: typing.Callable) -> typing.Callable:
     """Wrap function with common CLI options."""
 
     opts = (
         click.argument("name"),
-        click.option("-s", "--service", default="paper"),
+        click.option("-s", "--service", "svc"),
         click.option("-V", "--mc-version", default="1.20.1"))
-    return service_opts_apply(fn, opts)
+    return svc_opts_apply(fn, opts)
 
 
-def service_opts_java(fn: typing.Callable) -> typing.Callable:
+def svc_opts_java(fn: typing.Callable) -> typing.Callable:
     """Wrap function with common Java options."""
 
     opts = (
         click.option("-m", "--mem-ini"),
         click.option("-M", "--mem-max"))
-    return service_opts_apply(fn, opts)
+    return svc_opts_apply(fn, opts)
 
 
 def snake2camel(s: str) -> str:
@@ -649,8 +664,9 @@ def jars_jar_new(
 
     build   = str(build) if build else ""
     version = version_new(version)
-    service = service or Service.Plugin
-    return JarFile(build, name, version, service)
+    svc = svc_new(service, Service.Plugin)
+
+    return JarFile(build, name, version, svc)
 
 
 def jars_jar_package(
@@ -661,21 +677,35 @@ def jars_jar_package(
     this `JarFile`.
     """
 
+    def ispackagename(name):
+        return name in ("from_packages", "depends", "svc")
+
     def maker(name, pkg, pkg_name):
         # Sometimes we are parsing a subpackage
         # from a parent package.
-        if name in ("from_packages", "depends"):
+        if ispackagename(name):
             return
+
+        # Most likely a package path and invalid
+        # in this context.
+        if isinstance(pkg, (str, list)):
+            pkg = {"from": pkg}
 
         pkg["from_packages"] = pkg.pop("from", None)
         pkg["depends"] = pkg.pop("depends", None)
+        pkg["svc"] = pkg.pop("service", None)
 
-        if pkg_name:
+        if pkg_name and name != "from":
             name = ".".join([pkg_name, name])
+        elif pkg_name:
+            name = pkg_name
+
         ret[name] = jars_package_new(mc, name, **pkg)
 
-    def maker_iter(packages, pkg_name=None):
-        for name, pkg in packages.items():
+    def maker_iter(pkgs, pkg_name=None):
+        for name, pkg in pkgs.items():
+            if ispackagename(name):
+                continue
             maker(name, pkg, pkg_name)
 
     jar = jar or jars_jar_new(mc.pkg_name or mc.exe_name)
@@ -688,9 +718,7 @@ def jars_jar_package(
 
     try:
         maker_iter(pkgs)
-    except TypeError:
-        # Parsing failed. Most likely a super
-        # package.
+    except (TypeError):
         for name, sub_pkgs in pkgs.items():
             maker_iter(sub_pkgs, name)
 
@@ -759,7 +787,8 @@ def jars_package_new(
     mc: Minecraft,
     name: str,
     from_packages: str | JarPackage | typing.Sequence[str | JarPackage] | None = None,
-    depends: typing.Sequence[JarFile] | None = None) -> JarPackage:
+    depends: typing.Sequence[JarFile] | None = None,
+    svc: ServiceT | None = None) -> JarPackage:
     """Create a new `JarPackage` instance."""
 
     def from_pkgs(pkgs, cls=None):
@@ -790,7 +819,8 @@ def jars_package_new(
                     mc,
                     pkg["name"],
                     pkg.get("from", None),
-                    pkg.get("depends", None))
+                    pkg.get("depends", None),
+                    pkg.get("service", None))
             elif cls is JarFile:
                 pkg = jars_jar_new(**pkg)
 
@@ -807,13 +837,16 @@ def jars_package_new(
         from_packages = from_pkgs(from_packages, JarPackage)
 
     if not from_packages:
-        return JarPackage(name, from_packages or None, depends)
+        return JarPackage(name, None, depends, svc)
 
     depends = (depends or [])
     for pkg in from_packages:
         depends += (pkg.depends or [])
+        svc = svc_new(pkg.service)
 
-    return JarPackage(name, from_packages or None, tuple(depends))
+    depends = tuple(depends)
+    from_packages = from_packages or None
+    return JarPackage(name, from_packages, depends, svc)
 
 # -----------------------------------------------
 # Minecraft specific utilities. Used for
@@ -861,14 +894,48 @@ def minecraft_new(
 
 
 def minecraft_server_archive(
+    mc: Minecraft,
+    svc: Service | None,
+    preserve: bool | None = None):
+    """Archive the target service(s)."""
+
+    # Find pacakge information related to each
+    # service.
+
+    # Find all service directories that match the
+    # given service.
+
+    def isvalidpkg(pkg):
+        return (
+            pkg.service in svc
+            if isinstance(svc, typing.Iterable)
+            else pkg.servcie is svc)
+
+    if "*" in mc.exe_name:
+        for name, pkg in jars_jar_package(mc).items():
+            if not isvalidpkg(pkg):
+                continue
+            tmp = minecraft_new(name, mc.version, pkg.name)
+            minecraft_server_archive_one(tmp, pkg.service, preserve)
+    else:
+        minecraft_server_archive_one(mc, svc, preserve)
+
+
+def minecraft_server_archive_one(
         mc: Minecraft,
-        service: Service,
+        svc: Service,
         preserve: bool | None = None):
     """Archive the target service."""
 
     exe_from = (mc.exe_root / mc.exe_name)
+    if not exe_from.exists():
+        return
+
+    include = svc_arch_include(mc, svc)
+    if not include:
+        return
+
     with archive_write(mc, preserve) as bak:
-        include = service_arch_include(mc, service)
 
         for root, _, fls in os.walk(exe_from):
             root = pathlib.Path(root)
@@ -971,9 +1038,9 @@ def minecraft_server_svr_start(
         with_gui=False)
 
 
-def minecraft_service_start(
+def minecraft_svc_start(
     mc: Minecraft,
-    service: Service,
+    svc: Service,
     xms: str | None = None,
     xmx: str | None = None):
     """
@@ -985,9 +1052,9 @@ def minecraft_service_start(
     `xmx`: Maximum heap size.
     """
 
-    if service is Service.Velocity:
+    if svc is Service.Velocity:
         minecraft_server_pxy_start(mc, xms, xmx)
-    if service is Service.Paper:
+    if svc is Service.Paper:
         minecraft_server_svr_start(mc, xms, xmx)
 
 
@@ -1002,40 +1069,40 @@ def main_cli():
 
 
 @main_cli.command()
-@service_opts_common
-@service_opts_java
+@svc_opts_common
+@svc_opts_java
 def start(
     name: str,
-    service: Service | None = None,
+    svc: Service | None = None,
     mc_version: str | None = None,
     mem_ini: str | None = None,
     mem_max: str | None = None):
     """Start a service."""
 
-    service = service_new(service)
+    svc = svc_new(svc)
     mc = minecraft_new(name, version_new(mc_version))
 
     minecraft_server_init(mc)
-    minecraft_service_start(mc, service, mem_ini, mem_max)
+    minecraft_svc_start(mc, svc, mem_ini, mem_max)
 
 
 @main_cli.command()
-@service_opts_common
+@svc_opts_common
 @click.option("--preserve", is_flag=True)
 def backup(
     name: str,
-    service: Service | None = None,
+    svc: Service | None = None,
     mc_version: str | None = None,
     preserve: bool | None = None):
     """Create a backup of a service."""
 
-    service = service_new(service)
-    mc = minecraft_new(name, version_new(mc_version))
-    minecraft_server_archive(mc, service, preserve)
+    svc = svc_new(svc, default=ServiceServer)
+    mc  = minecraft_new(name, version_new(mc_version))
+    minecraft_server_archive(mc, svc, preserve)
 
 
 @main_cli.command()
-@service_opts_common
+@svc_opts_common
 @click.option("-t", "--tag")
 def restore(
     name: str,
@@ -1098,8 +1165,24 @@ def get(
 def getpkg(name: str, mc_version: str | None = None):
     """Download a package of JAR files."""
 
-    mc  = minecraft_new(name, mc_version)
+    mc = minecraft_new(name, mc_version)
     jars_download_package(mc)
+
+
+@jars.command()
+@click.argument("name")
+@click.option("-V", "--mc-version", default="1.20.1")
+def chkpkg(name: str, mc_version: str | None = None):
+    """Retrieve package information."""
+
+    import pprint
+
+    mc = minecraft_new(name, mc_version)
+    pkgs = jars_jar_package(mc)
+    for pkg in pkgs.values():
+        print("Package:", pkg.name, "Service:", pkg.service)
+        print("Depends on:\n", pprint.pformat([p.name for p in pkg.depends]))
+        print("From:\n", pprint.pformat([p.name for p in pkg.from_packages]))
 
 
 @jars.command()
@@ -1118,9 +1201,17 @@ def lnkpkg(
     """
 
     mc = minecraft_new(dst, mc_version, pkg_name=name)
+
     if download:
         jars_download_package(mc)
+
     jars_link_package(mc)
+
+
+@main_cli.command()
+@click.argument("port", default=25575)
+def shell(port: int):
+    """Connect to a remote console."""
 
 
 if __name__ == "__main__":
