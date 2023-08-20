@@ -36,6 +36,7 @@ floodgate      = '{host:geyser}/v2/projects/floodgate/versions/{version}/builds/
 gsit           = '{host:github}/Gecolay/GSit/releases/download/{version}/GSit-{version}.jar'
 geyser         = '{host}/v2/projects/geyser/versions/{version}/builds/{build}/downloads/velocity'
 luckperms      = '{host}/{build}/bukkit/loader/LuckPerms-Bukkit-{version}.jar'
+luckperms-vc   = '{host:luckperms}/{build}/velocity/LuckPerms-Velocity-{version}.jar'
 paper-mc       = '{host}/v2/projects/paper/versions/{version}/builds/{build}/downloads/paper-{version}-{build}.jar'
 silkspawners   = '{host:github}/timbru31/SilkSpawners/releases/download/{version}/SilkSpawners.jar'
 vault          = '{host:github}/MilkBowl/Vault/releases/download/{version}/Vault.jar'
@@ -49,14 +50,21 @@ worldguard     = '{host:bukkit}/projects/worldguard/files/{build}/download'
 # Base target definition from Minecraft servers.
 [jars.packages.proxy.1_20_1]
 service = "velocity"
+service_host = "127.0.0.1"
+service_port = 25565
 depends = [
     { name = 'velocity', version = '3.2.0-SNAPSHOT', build = '263', service = "velocity" },
     { name = 'geyser', version = 'latest', build= 'latest' },
-    { name = 'floodgate', version = 'latest', build = 'latest' }
+    { name = 'floodgate', version = 'latest', build = 'latest' },
+    { name = 'luckperms-vc', version = '5.4.102', build = '1515' }
 ]
 
 [jars.packages.server.1_20_1]
 service = "paper"
+service_host  = "127.0.0.1"
+service_port  = 30065
+rcon_port     = 25575
+rcon_password = 'abcd1234'
 depends = [
     { name = 'paper-mc', version = '1.20.1', build = '128', service = "paper" },
     { name = 'essentialsx*', version = '2.20.1'},
@@ -64,6 +72,7 @@ depends = [
     { name = 'vault', version = '1.7.3' }
 ]
 
+# More generic target definitions.
 [jars.packages.proxy_0]
 from = 'jars.packages.proxy.1_20_1'
 
@@ -77,6 +86,8 @@ depends = [
     { name = 'chestshop', version = '3.12.2' }
 ]
 
+# Actual server definitions used in our
+# environment.
 [jars.packages.aabernathy]
 from = 'jars.packages.proxy_0'
 
@@ -84,4 +95,5 @@ from = 'jars.packages.proxy_0'
 from = 'jars.packages.survival_0'
 
 [jars.packages.faerun]
+service_port = 30066
 from = 'jars.packages.survival_0'

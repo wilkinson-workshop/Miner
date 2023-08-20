@@ -7,6 +7,7 @@ httpcore==0.17.3
 httpx==0.24.1
 idna==3.4
 jproperties==2.1.1
+mctools==1.2.2
 six==1.16.0
 sniffio==1.3.0
 wget==3.2

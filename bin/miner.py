@@ -11,16 +11,18 @@ Basic CLI for maintaining server services.
 import contextlib
 import datetime
 import enum
+import getpass
 import os
 import pathlib
 import re
 import subprocess
+import textwrap
 import tomllib
 import typing
 import zipfile
 from urllib.error import HTTPError
 
-import click, httpx, jproperties, wget
+import click, httpx, jproperties, mctools, wget
 
 # -----------------------------------------------
 # Common script objects.
@@ -63,6 +65,10 @@ class JarPackage(typing.NamedTuple):
     from_packages: str | typing.Self | typing.Sequence[typing.Self] | None
     depends:       typing.Sequence[JarFile] | None
     service:       "Service"
+    service_port:  int
+    service_host:  str
+    rcon_port:     int
+    rcon_password: str
 
 
 class Minecraft(typing.NamedTuple):
@@ -218,7 +224,7 @@ def svc_arch_include(mc: Minecraft, svc: Service) -> tuple[pathlib.Path, ...]:
 
     # Define what files we want to preserve
     # in our backup.
-    if svc is Service.Paper:
+    if svc is Service.Paper or Service.Paper in svc:
         config = jproperties.Properties()
         config.load((exe_from / "server.properties").read_text())
         include = (
@@ -669,60 +675,52 @@ def jars_jar_new(
     return JarFile(build, name, version, svc)
 
 
-def jars_jar_package(
-    mc: Minecraft,
-    jar: JarFile | None = None) -> JarConfResponse[JarPackage]:
+def jars_jar_package(mc: Minecraft, jar: JarFile | None = None) -> JarConfResponse[JarPackage]:
     """
-    Get the package, or packages, associated with
-    this `JarFile`.
+    Get the package, or packages associated with
+    this `JarFile`
     """
 
-    def ispackagename(name):
-        return name in ("from_packages", "depends", "svc")
+    def hasinvalidkeys(m):
+        return any(map(lambda k: not ispackagekey(k), m))
 
-    def maker(name, pkg, pkg_name):
-        # Sometimes we are parsing a subpackage
-        # from a parent package.
-        if ispackagename(name):
-            return
+    def ispackagekey(k):
+        return k in pkg_keys
 
-        # Most likely a package path and invalid
-        # in this context.
-        if isinstance(pkg, (str, list)):
-            pkg = {"from": pkg}
+    pkg_keys = (
+        "depends",
+        "from",
+        "service",
+        "service_port",
+        "service_host",
+        "rcon_port",
+        "rcon_password")
+    pkg_txlpairs = (
+        ("from_packages", "from"),
+        ("svc", "service"),
+        ("svc_host", "service_host"),
+        ("svc_port", "service_port")
+    )
 
-        pkg["from_packages"] = pkg.pop("from", None)
-        pkg["depends"] = pkg.pop("depends", None)
-        pkg["svc"] = pkg.pop("service", None)
-
-        if pkg_name and name != "from":
-            name = ".".join([pkg_name, name])
-        elif pkg_name:
-            name = pkg_name
-
-        ret[name] = jars_package_new(mc, name, **pkg)
-
-    def maker_iter(pkgs, pkg_name=None):
-        for name, pkg in pkgs.items():
-            if ispackagename(name):
-                continue
-            maker(name, pkg, pkg_name)
-
-    jar = jar or jars_jar_new(mc.pkg_name or mc.exe_name)
-    ret = {}
-    pkg_path = ("jars", "packages", jar.name)
+    jar  = jar or jars_jar_new(mc.pkg_name or mc.exe_name)
+    path = ("jars", "packages", jar.name)
     if jar.version:
-        pkg_path += (str(jar.version).replace(".", "_"),)
-    pkg_path = ".".join(pkg_path)
-    pkgs     = jars_cfg_opt(mc, pkg_path)
+        path += (str(jar.version).replace(".", "_"),)
+    pkgs = jars_cfg_opt(mc, ".".join(path))
 
-    try:
-        maker_iter(pkgs)
-    except (TypeError):
-        for name, sub_pkgs in pkgs.items():
-            maker_iter(sub_pkgs, name)
+    for name, pkg in tuple(pkgs.items()):
+        if hasinvalidkeys(pkg):
+            pkgs.pop(name)
+            continue
 
-    return ret
+        # Translate manifest keywords to
+        # constructor keywords.
+        for new, old in pkg_txlpairs:
+            pkg[new] = pkg.pop(old, None)
+
+        pkgs[name] = jars_package_new(mc, name, **pkg)
+
+    return pkgs
 
 
 def jars_jar_url(mc: Minecraft, jar: JarFile) -> JarConfResponse[str]:
@@ -788,7 +786,11 @@ def jars_package_new(
     name: str,
     from_packages: str | JarPackage | typing.Sequence[str | JarPackage] | None = None,
     depends: typing.Sequence[JarFile] | None = None,
-    svc: ServiceT | None = None) -> JarPackage:
+    svc: ServiceT | None = None,
+    svc_port: int | None = None,
+    svc_host: str | None = None,
+    rcon_port: int | None = None,
+    rcon_password: str | None = None) -> JarPackage:
     """Create a new `JarPackage` instance."""
 
     def from_pkgs(pkgs, cls=None):
@@ -820,7 +822,11 @@ def jars_package_new(
                     pkg["name"],
                     pkg.get("from", None),
                     pkg.get("depends", None),
-                    pkg.get("service", None))
+                    pkg.get("service", None),
+                    pkg.get("service_port", None),
+                    pkg.get("service_host", None),
+                    pkg.get("rcon_port", None),
+                    pkg.get("rcon_password", None))
             elif cls is JarFile:
                 pkg = jars_jar_new(**pkg)
 
@@ -837,21 +843,108 @@ def jars_package_new(
         from_packages = from_pkgs(from_packages, JarPackage)
 
     if not from_packages:
-        return JarPackage(name, None, depends, svc)
+        return JarPackage(
+            name,
+            None,
+            depends,
+            svc,
+            svc_port,
+            svc_host,
+            rcon_port,
+            rcon_password)
 
     depends = (depends or [])
     for pkg in from_packages:
         depends += (pkg.depends or [])
         svc = svc_new(pkg.service)
+        svc_port      = pkg.service_port
+        svc_host      = pkg.service_host
+        rcon_port     = pkg.rcon_port
+        rcon_password = pkg.rcon_password
 
     depends = tuple(depends)
     from_packages = from_packages or None
-    return JarPackage(name, from_packages, depends, svc)
+    return JarPackage(
+        name,
+        from_packages,
+        depends,
+        svc,
+        svc_port,
+        svc_host,
+        rcon_port,
+        rcon_password)
+
 
 # -----------------------------------------------
 # Minecraft specific utilities. Used for
 # executing and organizing services.
 # -----------------------------------------------
+
+def minecraft_archive(
+    mc: Minecraft,
+    svc: Service | None,
+    preserve: bool | None = None):
+    """Archive the target service(s)."""
+
+    # Find pacakge information related to each
+    # service.
+
+    # Find all service directories that match the
+    # given service.
+
+    def isvalidpkg(pkg):
+        return (
+            pkg.service in svc
+            if isinstance(svc, typing.Iterable)
+            else pkg.servcie is svc)
+
+    if "*" in mc.exe_name:
+        pkgs = jars_jar_package(mc)
+    elif mc.exe_name == "all":
+        pkgs = jars_jar_package(mc, jars_jar_new("*"))
+    else:
+        minecraft_archive_one(mc, svc, preserve)
+        return
+
+    for name, pkg in pkgs.items():
+        if not isvalidpkg(pkg):
+            continue
+        tmp = minecraft_new(name, mc.version, pkg.name)
+        minecraft_archive_one(tmp, pkg.service, preserve)
+
+
+def minecraft_archive_one(
+        mc: Minecraft,
+        svc: Service,
+        preserve: bool | None = None):
+    """Archive the target service."""
+
+    exe_from = (mc.exe_root / mc.exe_name)
+    if not exe_from.exists():
+        return
+
+    include = svc_arch_include(mc, svc)
+    if not include:
+        return
+
+    with archive_write(mc, preserve) as bak:
+
+        for root, _, fls in os.walk(exe_from):
+            root = pathlib.Path(root)
+
+            if root == exe_from:
+                for f in include:
+                    bak.write(f) if f.is_file() else None
+                continue
+
+            is_child = any([parent in include for parent in root.parents])
+            if not (is_child or (root in include)):
+                continue
+
+            for f in fls:
+                f = (root / f)
+                bak.write(f) if f.is_file() else None
+
 
 def minecraft_new(
     name: str,
@@ -891,67 +984,6 @@ def minecraft_new(
         svr_version,
         pkg_name,
         version)
-
-
-def minecraft_server_archive(
-    mc: Minecraft,
-    svc: Service | None,
-    preserve: bool | None = None):
-    """Archive the target service(s)."""
-
-    # Find pacakge information related to each
-    # service.
-
-    # Find all service directories that match the
-    # given service.
-
-    def isvalidpkg(pkg):
-        return (
-            pkg.service in svc
-            if isinstance(svc, typing.Iterable)
-            else pkg.servcie is svc)
-
-    if "*" in mc.exe_name:
-        for name, pkg in jars_jar_package(mc).items():
-            if not isvalidpkg(pkg):
-                continue
-            tmp = minecraft_new(name, mc.version, pkg.name)
-            minecraft_server_archive_one(tmp, pkg.service, preserve)
-    else:
-        minecraft_server_archive_one(mc, svc, preserve)
-
-
-def minecraft_server_archive_one(
-        mc: Minecraft,
-        svc: Service,
-        preserve: bool | None = None):
-    """Archive the target service."""
-
-    exe_from = (mc.exe_root / mc.exe_name)
-    if not exe_from.exists():
-        return
-
-    include = svc_arch_include(mc, svc)
-    if not include:
-        return
-
-    with archive_write(mc, preserve) as bak:
-
-        for root, _, fls in os.walk(exe_from):
-            root = pathlib.Path(root)
-
-            if root == exe_from:
-                for f in include:
-                    bak.write(f) if f.is_file() else None
-                continue
-
-            is_child = any([parent in include for parent in root.parents])
-            if not (is_child or (root in include)):
-                continue
-
-            for f in fls:
-                f = (root / f)
-                bak.write(f) if f.is_file() else None
 
 
 def minecraft_server_init(mc: Minecraft):
@@ -1057,11 +1089,9 @@ def minecraft_svc_start(
     if svc is Service.Paper:
         minecraft_server_svr_start(mc, xms, xmx)
 
-
 # -----------------------------------------------
 # Miner Command Line Interface.
 # -----------------------------------------------
-
 
 @click.group()
 def main_cli():
@@ -1087,18 +1117,21 @@ def start(
 
 
 @main_cli.command()
-@svc_opts_common
+@click.argument("name", nargs=-1)
+@click.option("-s", "--service", "svc")
+@click.option("-V", "--mc-version", default="1.20.1")
 @click.option("--preserve", is_flag=True)
 def backup(
-    name: str,
+    name: tuple[str],
     svc: Service | None = None,
     mc_version: str | None = None,
     preserve: bool | None = None):
     """Create a backup of a service."""
 
     svc = svc_new(svc, default=ServiceServer)
-    mc  = minecraft_new(name, version_new(mc_version))
-    minecraft_server_archive(mc, svc, preserve)
+    for n in name:
+        mc  = minecraft_new(n, version_new(mc_version))
+        minecraft_archive(mc, svc, preserve)
 
 
 @main_cli.command()
@@ -1175,14 +1208,26 @@ def getpkg(name: str, mc_version: str | None = None):
 def chkpkg(name: str, mc_version: str | None = None):
     """Retrieve package information."""
 
-    import pprint
-
     mc = minecraft_new(name, mc_version)
     pkgs = jars_jar_package(mc)
     for pkg in pkgs.values():
-        print("Package:", pkg.name, "Service:", pkg.service)
-        print("Depends on:\n", pprint.pformat([p.name for p in pkg.depends]))
-        print("From:\n", pprint.pformat([p.name for p in pkg.from_packages]))
+        click.echo(f"Package: {pkg.name} ServiceType: {pkg.service}")
+        if pkg.depends:
+            click.echo(f"Depends On({len(pkg.depends)}):")
+            for d in pkg.depends:
+                click.echo(f"    - {d.name}:{d.version}")
+        if pkg.from_packages:
+            click.echo(f"From Packages({len(pkg.from_packages)}):")
+            for p in pkg.from_packages:
+                click.echo(f"    - {p.name}")
+        if any([pkg.service_host, pkg.service_port, pkg.rcon_port]):
+            click.echo(textwrap.dedent(f"""\
+            Network Info:
+                Host:      {pkg.service_host if pkg.service_host else 'unset'}
+                Port:      {pkg.service_port if pkg.service_port else 'unset'}
+                RCON Port: {pkg.rcon_port if pkg.rcon_port else 'unset'}
+                RCON Pass: {'*'*10 if pkg.rcon_password else 'unset'}
+            """))
 
 
 @jars.command()
@@ -1190,12 +1235,7 @@ def chkpkg(name: str, mc_version: str | None = None):
 @click.argument("dst")
 @click.option("-V", "--mc-version", default="1.20.1")
 @click.option("--download", is_flag=True)
-def lnkpkg(
-    name: str,
-    dst: str,
-    *,
-    mc_version: str | None = None,
-    download: bool | None = None):
+def lnkpkg(name: str, dst: str, *, mc_version: str, download: bool):
     """
     Link package files to target service assets.
     """
@@ -1209,9 +1249,66 @@ def lnkpkg(
 
 
 @main_cli.command()
-@click.argument("port", default=25575)
-def shell(port: int):
+@click.argument("cmd", nargs=-1)
+@click.option("-p", "--port")
+@click.option("-H", "--host")
+@click.option("--password")
+@click.option("-P", "--package", "pkg")
+@click.option("-V", "--package-version", "pkg_version", default="1.20.1")
+def shell(
+    cmd: str,
+    *,
+    port: int,
+    host: str,
+    password: str,
+    pkg: str | JarPackage,
+    pkg_version: str):
     """Connect to a remote console."""
+
+    name = host
+    if pkg:
+        pkg = jars_jar_package(minecraft_new(pkg, pkg_version))[pkg]
+        if pkg.service not in (Service.Paper,):
+            click.echo(
+                "target service does not support RCON protocol.",
+                err=True)
+            quit(1)
+
+        port     = pkg.rcon_port or port
+        host     = pkg.service_host or host
+        password = pkg.rcon_password or password
+        if pkg.name:
+            name = f"{pkg.name}({host}{':' + str(port) if port else ''})"
+        rep_name = pkg.name or host
+
+    def handleauth():
+        rt = rcon.login(password or getpass.getpass("password: "))
+        if not rt:
+            click.echo("Authentication failed", err=True)
+            quit(1)
+
+    def handlecmd(cmd):
+        if cmd in ("q", "Q"):
+            quit(0)
+
+        rt = rcon.command(cmd)
+        if not rt:
+            click.echo("bad response from remote.", err=True)
+            quit(1)
+        click.echo(rt.encode())
+
+    with mctools.RCONClient(host, port) as rcon:
+        handleauth()
+        click.echo(f"MinerShell@{name} Connected.")
+        if cmd:
+            handlecmd(cmd)
+            return
+
+        while True:
+            try:
+                handlecmd((cmd := input(f"{rep_name}$ ")))
+            except KeyboardInterrupt:
+                click.echo()
 
 
 if __name__ == "__main__":
