@@ -1,16 +1,21 @@
 # Defines special keywords we use to format strings in subsequent
 # sections.
 [jars.uri.special.hosts]
-github    = 'https://github.com'
+bukkit    = 'https://dev.bukkit.org'
+modrinth  = 'https://cdn.modrinth.com' # 
 chestshop = 'https://hangarcdn.papermc.io'
-geyser    = 'https://download.geyser.org'
+geyser    = 'https://download.geysermc.org'
+github    = 'https://github.com'
 luckperms = 'https://download.luckperms.net'
 paper-mc  = 'https://api.papermc.io'
-bukkit    = 'https://dev.bukkit.org'
+spigot-mc = 'https://www.spigotmc.org'
 
 # jars.uri.special.name represents the final 'name' the file will be
 # given when placed in the target jars subdirectory.
 [jars.uri.special.names]
+bluebridge-core         = 'BlueBridgeCore-{version}.jar'
+bluebridge-wg           = 'BlueBridgeWG-{version}.jar'
+bluebridge-wb           = 'BlueBridgeWB-{version}.jar'
 essentialsx             = 'EssentialsX-{version}.jar'
 essentialsx-antibuild   = 'EssentialsXAntiBuild-{version}.jar'
 essentialsx-chat        = 'EssentialsXChat-{version}.jar'
@@ -19,6 +24,8 @@ essentialsx-discordlink = 'EssentialsXDiscordLink-{version}.jar'
 essentialsx-geoip       = 'EssentialsXGeoIP-{version}.jar'
 essentialsx-protect     = 'EssentialsXProtect-{version}.jar'
 essentialsx-spawn       = 'EssentialsXSpawn-{version}.jar'
+
+lwc = 'LWC-{version}.jar'
 
 floodgate  = 'Floodgate-velocity.jar'
 geyser     = 'Geyser-velocity.jar'
@@ -29,6 +36,7 @@ worldguard = 'WorldGuard-bukkit-{version}-dist.jar'
 # jar file.
 [jars.uri.definitions]
 bettersleeping = '{host:github}/Nuytemans-Dieter/BetterSleeping/releases/download/{version}/BetterSleeping.jar'
+bluebridge     = '{host:github}/Mark-225/BlueBridge/releases/download/{version}/{name}'
 bluemap        = '{host:github}/BlueMap-Minecraft/BlueMap/releases/download/v{version}/BlueMap-{version}-spigot.jar'
 chestshop      = '{host}/plugins/ChestShop/ChestShop/versions/{version}/PAPER/ChestShop.jar'
 essentialsx    = '{host:github}/EssentialsX/Essentials/releases/download/{version}/{name}'
@@ -37,6 +45,7 @@ gsit           = '{host:github}/Gecolay/GSit/releases/download/{version}/GSit-{v
 geyser         = '{host}/v2/projects/geyser/versions/{version}/builds/{build}/downloads/velocity'
 luckperms      = '{host}/{build}/bukkit/loader/LuckPerms-Bukkit-{version}.jar'
 luckperms-vc   = '{host:luckperms}/{build}/velocity/LuckPerms-Velocity-{version}.jar'
+lwc            = '{host:spigot-mc}/resources/lwc-extended.69551/download?version={build}'
 paper-mc       = '{host}/v2/projects/paper/versions/{version}/builds/{build}/downloads/paper-{version}-{build}.jar'
 silkspawners   = '{host:github}/timbru31/SilkSpawners/releases/download/{version}/SilkSpawners.jar'
 vault          = '{host:github}/MilkBowl/Vault/releases/download/{version}/Vault.jar'
@@ -69,6 +78,7 @@ depends = [
     { name = 'paper-mc', version = '1.20.1', build = '128', service = "paper" },
     { name = 'essentialsx*', version = '2.20.1'},
     { name = 'luckperms', version = '5.4.102', build = "1515" },
+    { name = 'lwc', version = '2.3.0', build = '499920' },
     { name = 'vault', version = '1.7.3' }
 ]
 
@@ -79,11 +89,13 @@ from = 'jars.packages.proxy.1_20_1'
 [jars.packages.survival_0]
 from = 'jars.packages.server.1_20_1'
 depends = [
-    { name = 'bettersleeping', version = 'v4.0.2' },
+    { name = 'bluebridge*', version = '2.1'},
     { name = 'bluemap', version = '3.16'},
     { name = 'gsit', version = '1.4.10' },
     { name = 'silkspawners', version = 'silkspawners-7.5.0' },
-    { name = 'chestshop', version = '3.12.2' }
+    { name = 'chestshop', version = '3.12.2' },
+    { name = 'worldedit', version = '7.2.16-SNAPSHOT', build = '0' },
+    { name = 'worldguard', version = '7.0.10-SNAPSHOT', build = '0' }
 ]
 
 # Actual server definitions used in our
@@ -93,6 +105,14 @@ from = 'jars.packages.proxy_0'
 
 [jars.packages.test]
 from = 'jars.packages.survival_0'
+
+[jars.packages.lobby]
+rcon_port = 25576
+from = 'jars.packages.server.1_20_1'
+depends = [
+    { name = 'worldedit', version = '7.2.16-SNAPSHOT', build = '0' },
+    { name = 'worldguard', version = '7.0.10-SNAPSHOT', build = '0' }
+]
 
 [jars.packages.faerun]
 service_port = 30066

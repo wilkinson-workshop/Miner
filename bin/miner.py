@@ -614,9 +614,14 @@ def jars_jar_check(mc: Minecraft, jar: JarFile) -> bool:
     Build URL from `JarFile` and test that it exists.
     """
 
+    methods = ("HEAD", "GET")
+
     urls = jars_jar_url(mc, jar)
     for name, url in urls.items():
-        r = httpx.head(url, follow_redirects=True)
+        for method in methods:
+            r = httpx.request(method, url, follow_redirects=True)
+            if r.status_code in range(200, 300):
+                break
         click.echo(f"{name}: {url} <{r.status_code} {r.reason_phrase}>")
 
     return r.status_code in range(200, 300)
@@ -763,7 +768,6 @@ def jars_link(mc: Minecraft, jar: JarFile) -> None:
             click.echo(f"{tmp} could not be found in JARs cache.", err=True)
             continue
         if (dst / name).exists():
-            click.echo(f"{tmp} already linked to {mc.exe_name!r}.", err=True)
             continue
 
         os.link((src / name), (dst / name))
@@ -1185,20 +1189,25 @@ def get(
     jars_download(mc, jar)
 
 
-@jars.command()
+@main_cli.group()
+def pkgs():
+    """Manage Service Packages."""
+
+
+@pkgs.command()
 @click.argument("name")
 @click.option("-V", "--mc-version", default="1.20.1")
-def getpkg(name: str, mc_version: str | None = None):
+def get(name: str, mc_version: str | None = None):
     """Download a package of JAR files."""
 
     mc = minecraft_new(name, mc_version)
     jars_download_package(mc)
 
 
-@jars.command()
+@pkgs.command()
 @click.argument("name")
 @click.option("-V", "--mc-version", default="1.20.1")
-def chkpkg(name: str, mc_version: str | None = None):
+def check(name: str, mc_version: str | None = None):
     """Retrieve package information."""
 
     mc = minecraft_new(name, mc_version)
@@ -1223,12 +1232,12 @@ def chkpkg(name: str, mc_version: str | None = None):
             """))
 
 
-@jars.command()
+@pkgs.command()
 @click.argument("name")
 @click.argument("dst")
 @click.option("-V", "--mc-version", default="1.20.1")
 @click.option("--download", is_flag=True)
-def lnkpkg(name: str, dst: str, *, mc_version: str, download: bool):
+def link(name: str, dst: str, *, mc_version: str, download: bool):
     """
     Link package files to target service assets.
     """
@@ -1244,7 +1253,7 @@ def lnkpkg(name: str, dst: str, *, mc_version: str, download: bool):
 @main_cli.command()
 @click.argument("cmd", nargs=-1)
 @click.option("-p", "--port", default=os.getenv("MINER_RCON_PORT", 25575))
-@click.option("-H", "--host", default=os.getenv("MINER_RCON_HOST", "locahost"))
+@click.option("-H", "--host", default=os.getenv("MINER_RCON_HOST", "127.0.0.1"))
 @click.option("--password", default=os.getenv("MINER_RCON_PASSWORD", None))
 @click.option("-P", "--package", "pkg")
 @click.option("-V", "--package-version", "pkg_version", default="1.20.1")
@@ -1293,15 +1302,17 @@ def shell(
         if not rt:
             click.echo("bad response from remote.", err=True)
             quit(1)
-        click.echo(rt.encode())
+
+        if rt:
+            click.echo(rt)
 
     with mctools.RCONClient(host, port) as rcon:
         handleauth()
-        click.echo(f"MinerShell@{name} Connected.")
         if cmd:
-            handlecmd(cmd)
+            handlecmd(" ".join(cmd))
             return
 
+        click.echo(f"MinerShell@{name} Connected.")
         while True:
             try:
                 handlecmd((cmd := input(f"{rep_name}$ ")))
